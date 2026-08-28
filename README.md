@@ -10,6 +10,10 @@ compressed into the steps below.
 
 ## Results
 
+**Full [BetterBench](https://github.com/GGZ14/BetterBench) report: [benchmarks/RESULTS.md](benchmarks/RESULTS.md)**
+(percentile tables, concurrency knee, 2k–128k prefill sweep, raw JSON + charted HTML).
+
+
 | metric | naive setup (RCCL fallback, MTP) | this guide (P2P + DFlash2, tuned) |
 |---|---|---|
 | single-stream decode | 86–98 tok/s | **132–144 tok/s** |
