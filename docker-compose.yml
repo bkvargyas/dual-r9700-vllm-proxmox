@@ -1,0 +1,58 @@
+# Dual R9700 vLLM serving: FP8 target + DFlash2 drafter, P2P one-shot all-reduce.
+# See README.md — the rccl-build mounts require the NDEBUG-rebuilt RCCL (step 4).
+services:
+  vllm:
+    image: magiccodingman/vllm-radiance:1.0.11
+    container_name: vllm-r9700
+    restart: unless-stopped
+    command:
+      - /models/Qwen/Qwen3.8-27B-FP8
+      - --served-model-name=qwen3.8-27b
+      - '--speculative-config={"method":"dflash","model":"/models/z-lab/Qwen3.8-27B-DFlash2","num_speculative_tokens":7,"attention_backend":"TRITON_ATTN"}'
+      - --tensor-parallel-size=2
+      - --gpu-memory-utilization=0.95
+      - --max-model-len=200000
+      - --port=8000
+      - --host=0.0.0.0
+      - --max-num-seqs=8
+      - --trust-remote-code
+      - '--override-generation-config={"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0, "repetition_penalty": 1.0}'
+      - --reasoning-parser=qwen3
+      - --tool-call-parser=qwen3_coder
+      - --attention-backend=R4D
+      - --enable-auto-tool-choice
+      - --no-async-scheduling
+      - --max-num-batched-tokens=8192
+      - --enable-prefix-caching
+      - --mamba-cache-mode=align
+      - --chat-template=/chat_template.jinja
+      - --enable-per-request-metrics
+      - --enable-prompt-tokens-details
+      - '--default-chat-template-kwargs={"enable_thinking": true, "reasoning_effort": "xhigh"}'
+      - --enable-chunked-prefill
+    environment:
+      HIP_VISIBLE_DEVICES: "0,1"
+      # REQUIRED with chunk 8192: keeps the 84MB prefill all-reduce on the P2P
+      # one-shot kernel instead of silently falling back to RCCL (default cap 48MB).
+      RADIANCE_AR_MAX_KB: "98304"
+      VLLM_CACHE_ROOT: /cache/vllm
+      TORCHINDUCTOR_CACHE_DIR: /cache/inductor
+      TRITON_CACHE_DIR: /cache/triton
+      AITER_ROOT_DIR: /cache/aiter
+      NCCL_PROTO: Simple
+      TORCHINDUCTOR_COMPILE_THREADS: "4"
+    devices: [/dev/kfd:/dev/kfd, /dev/dri:/dev/dri]
+    group_add: ["991", "44"]   # your guest's render + video GIDs
+    cap_add: [SYS_PTRACE, SYS_NICE]
+    security_opt: [seccomp=unconfined]
+    ipc: host
+    ports: ["8000:8000"]
+    volumes:
+      - /home/USER/models:/models:ro
+      - ./cache:/cache
+      # any Qwen3.8 chat template works; this one ships with the AMD Quark checkpoint
+      - /home/USER/models/amd/Qwen3.8-27B-Quark-AWQ-MXFP4/chat_template.jinja:/chat_template.jinja:ro
+      # NDEBUG-rebuilt RCCL + symbol stubs — REQUIRED on the P2P switch topology (README step 4)
+      - /home/USER/rccl-build/librccl-final.so:/opt/rocm/core-7.14/lib/librccl.so.1:ro
+      - /home/USER/rccl-build/libnccldump_stub.so:/opt/rocm/core-7.14/lib/libnccldump_stub.so:ro
+      - /home/USER/rccl-build/libnccl_devapi_stub.so:/opt/rocm/core-7.14/lib/libnccl_devapi_stub.so:ro

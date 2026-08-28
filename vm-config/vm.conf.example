@@ -1,0 +1,23 @@
+# Proxmox VM config for GPU P2P (/etc/pve/qemu-server/<vmid>.conf)
+# Key parts only — adapt disks/net to your environment.
+#
+# - NO hostpciN entries for the GPUs: they are raw args devices on a shared
+#   emulated switch (pci_p2pdma requires a common upstream bridge).
+# - Because of that, Proxmox will not auto-bind vfio-pci; add on the HOST:
+#     /etc/modprobe.d/vfio.conf:
+#       options vfio-pci ids=1002:7551 disable_idle_d3=1
+#       softdep amdgpu pre: vfio-pci
+#     then update-initramfs -u
+# - Replace 0000:XX:00.0 / 0000:YY:00.0 with your GPUs' host BDFs (lspci | grep -i r9700).
+# - The GUEST kernel needs CONFIG_HSA_AMD_P2P=y (XanMod on Debian; stock Ubuntu 24.04+ ok)
+#   and this cmdline (e.g. /etc/default/grub.d/amdgpu-p2p.cfg):
+#     amdgpu.pcie_gen_cap=0x001F001F amdgpu.pcie_lane_cap=0x003F003F
+
+args: -fw_cfg name=opt/ovmf/X-PciMmio64Mb,string=131072 -device pcie-root-port,id=p2prp,bus=pcie.0,chassis=90,slot=90,x-speed=32,x-width=16 -device x3130-upstream,id=p2pup,bus=p2prp -device xio3130-downstream,id=p2pdn1,bus=p2pup,chassis=91,slot=1 -device xio3130-downstream,id=p2pdn2,bus=p2pup,chassis=92,slot=2 -device vfio-pci,host=0000:XX:00.0,bus=p2pdn1,addr=0x0 -device vfio-pci,host=0000:YY:00.0,bus=p2pdn2,addr=0x0
+bios: ovmf
+cpu: host
+machine: q35
+memory: 65536
+cores: 16
+numa: 1
+ostype: l26
