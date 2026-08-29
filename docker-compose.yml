@@ -26,6 +26,9 @@ services:
       - --enable-prefix-caching
       - --mamba-cache-mode=align
       - --chat-template=/chat_template.jinja
+      # Fine on THIS profile (measured: update-gap p99 56.8 ms with them). On the
+      # mxfp4-dflash profile the same flags cause ~0.5 s stream stalls — see README
+      # gotcha 7 before copying them there.
       - --enable-per-request-metrics
       - --enable-prompt-tokens-details
       - '--default-chat-template-kwargs={"enable_thinking": true, "reasoning_effort": "xhigh"}'

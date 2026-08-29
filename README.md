@@ -204,9 +204,11 @@ hard-won, non-obvious settings:
    `--kv-cache-memory` pin instead — the pin overrides util and reclaims the 1–3 GiB
    vLLM's own profiler leaves on the table (derivation recipe in
    [`mxfp4-dflash/run_mxfp4_dflash.sh`](mxfp4-dflash/run_mxfp4_dflash.sh)).
-7. `--enable-per-request-metrics` + `--enable-prompt-tokens-details` cost a periodic
-   **~0.5 s stream stall** (update-gap p99 523.8 ms → 34.7 ms without; A/B'd on
-   vLLM 0.28). Leave them off unless something consumes them.
+7. **On the MXFP4-W4A8+dflash profile**, `--enable-per-request-metrics` +
+   `--enable-prompt-tokens-details` cost a periodic **~0.5 s stream stall**
+   (update-gap p99 523.8 ms → 34.7 ms without; A/B'd). The FP8 profile ran the same
+   flags with clean streaming (p99 56.8 ms), so this is a flags × profile interaction —
+   if you enable them, check your update-gap p99 before trusting the stream.
 8. Trim `cudagraph_capture_sizes` to `max_num_seqs × (num_speculative_tokens + 1)` —
    the default ladder captures ~1 GiB/GPU of graphs that can never replay.
 9. This lineage returns the thinking trace in a `reasoning` field (not
