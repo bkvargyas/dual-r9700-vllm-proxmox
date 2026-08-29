@@ -22,42 +22,46 @@ own serving defaults (thinking ON, `reasoning_effort xhigh`).
 | dflash impl | native | ggz14 backport | native |
 | radiance extras | — | int2 fast-draft + verify-head, GDN merge, libr4d b9e42ab-rx2, small-M decode GEMM | same, overlaid at container start |
 | KV capacity | ~202k tokens | 940k tokens | 922k tokens |
-| raw data | [json](baseline-dflash-fp8-magic1011-bb040.json) · [html](baseline-dflash-fp8-magic1011-bb040.html) | [json](candidate-mxfp4-dflash-sd093-bb040.json) · [html](candidate-mxfp4-dflash-sd093-bb040.html) | [json](candidate-mxfp4-dflash-mcm1011-vllm028-bb040.json) · [html](candidate-mxfp4-dflash-mcm1011-vllm028-bb040.html) |
+| raw data | [json](baseline-dflash-fp8-magic1011-bb040.json) · [html](baseline-dflash-fp8-magic1011-bb040.html) | [json](candidate-mxfp4-dflash-sd093-bb040.json) · [html](candidate-mxfp4-dflash-sd093-bb040.html) | [json](final-mxfp4-dflash-vllm028-bb040.json) · [html](final-mxfp4-dflash-vllm028-bb040.html) |
 
 ## Headline comparison
 
-| metric | baseline (FP8+dflash) | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 port |
+| metric | baseline (FP8+dflash) | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 (adopted) |
 |---|--:|--:|--:|
-| combined decode t/s (weighted median) | 106.2 | **154.2** | 151.3 |
-| stream update gap p50 | 39.1 ms | 25.5 ms | ~24.5 ms |
-| stream update gap p99 (weighted) | 56.8 ms | **36.9 ms** | 523.8 ms¹ |
-| TTFT p50 (weighted) | 155 ms | **165 ms** | 206 ms¹ |
-| aggregate @ 8 streams | 435.4 | 464.6 | 465.2 |
-| aggregate @ 16 streams | 404.3 (degrading) | 490.2 | 494.4 |
-| prefill @ 32k (median) | 4,365 | 4,710 | 4,710 |
-| prefill @ 128k (median) | 3,376 | **4,085** | 4,076 |
+| combined decode t/s (weighted median) | 106.2 | 154.2 | **161.5** |
+| stream update gap p50 | 39.1 ms | 25.5 ms | **25.1 ms** |
+| stream update gap p99 (weighted) | 56.8 ms | **36.9 ms** | 40.2 ms |
+| TTFT p50 (weighted) | 155 ms | **165 ms** | 199 ms¹ |
+| aggregate @ 8 streams | 435.4 | 464.6 | **474.7** |
+| aggregate @ 16 streams | 404.3 (degrading) | **490.2** | 470.7 |
+| prefill @ 16k / 32k (median) | 4,490 / 4,365 | 4,734 / 4,710 | 4,721 / 4,699 |
+| prefill @ 128k (median) | 3,376 | 4,085 | **4,086** |
 | GPU KV cache | ~202k tok | **940k tok** | 922k tok |
 
-¹ measured with `--enable-per-request-metrics --enable-prompt-tokens-details` active —
-see the note below. A 10-pass decode-only re-run **without** those flags:
-combined decode **159.1 t/s**, update p99 **34.7 ms** — the stall is entirely the flags;
-a ~35 ms TTFT tax vs the 0.27.1 stack remains (small prompts only, deep prefill at parity).
+¹ the 0.28 port pays ~35 ms more TTFT than the 0.27.1 stack on short prompts; deep
+prefill and decode are at parity. Root cause unchased — a fixed per-request cost,
+invisible at depth.
 
-**Adopted: the 0.28 port** (without the metrics flags) — decode at parity-or-better,
-best stream smoothness, native dflash instead of a pinned backport.
+**Adopted: the 0.28 port** — best decode and @8 aggregate, clean streaming, native
+dflash instead of a pinned backport. An earlier 20-pass run of the same port WITH
+`--enable-per-request-metrics --enable-prompt-tokens-details`
+([json](candidate-mxfp4-dflash-mcm1011-vllm028-bb040.json) ·
+[html](candidate-mxfp4-dflash-mcm1011-vllm028-bb040.html)) measured combined decode
+151.3 with a ~0.5 s periodic stream stall (update p99 **523.8 ms**) — kept as the
+demonstration of what those flags cost on this profile.
 
 ## Per-category single-stream decode t/s (median)
 
-| category | baseline | mxfp4-dflash 0.27.1 | Δ |
-|---|--:|--:|--:|
-| code | 94.7 | 151.0 | +59% |
-| json | 145.9 | 207.5 | +42% |
-| math | 136.8 | 208.8 | +53% |
-| file_edit | 136.6 | 188.8 | +38% |
-| summarization | 134.5 | 186.3 | +38% |
-| prose | 80.0 | 116.2 | +45% |
-| reasoning | 84.2 | 114.1 | +36% |
-| chat | 71.9 | 111.4 | +55% |
+| category | baseline | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 (adopted) | Δ vs baseline |
+|---|--:|--:|--:|--:|
+| json | 145.9 | 207.5 | **221.1** | +52% |
+| math | 136.8 | 208.8 | **214.7** | +57% |
+| file_edit | 136.6 | 188.8 | **202.5** | +48% |
+| summarization | 134.5 | 186.3 | **202.2** | +50% |
+| code | 94.7 | 151.0 | **157.0** | +66% |
+| prose | 80.0 | 116.2 | **118.1** | +48% |
+| reasoning | 84.2 | 114.1 | **115.2** | +37% |
+| chat | 71.9 | 111.4 | **113.1** | +57% |
 
 ## Output-quality gates (run on every adopted config)
 

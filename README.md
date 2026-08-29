@@ -1,7 +1,7 @@
 # Dual AMD R9700 vLLM Serving on Proxmox — with working GPU P2P and DFlash2
 
-A reproducible guide for serving **Qwen3.8-27B at 154–159 tok/s combined single-stream
-decode (~210 on json/math), ~4,700 tok/s prefill, and a 922k-token KV cache** on two
+A reproducible guide for serving **Qwen3.8-27B at 161.5 tok/s combined single-stream
+decode (>210 on json/math), ~4,700 tok/s prefill, and a 922k-token KV cache** on two
 AMD Radeon AI PRO R9700s (gfx1201/RDNA4) passed through to a Proxmox VM — including the
 four fixes required to make **GPU↔GPU P2P work inside a VM**, which as far as we know
 had no public end-to-end recipe before.
@@ -25,10 +25,10 @@ Measured like-for-like with [BetterBench](https://github.com/GGZ14/BetterBench) 
 
 | metric (BetterBench 0.4.0) | FP8 + DFlash2 | MXFP4-W4A8 + DFlash2-FP8 |
 |---|--:|--:|
-| combined decode t/s (weighted) | 106.2 | **154–159** |
-| best category (json/math) | 145.9 | **~210** |
-| aggregate @ 8 / @ 16 streams | 435 / 404 | **465 / 494** |
-| cold prefill @ 128k | 3,376 t/s | **4,085 t/s** |
+| combined decode t/s (weighted) | 106.2 | **161.5** |
+| best categories (json / math) | 145.9 / 136.8 | **221.1 / 214.7** |
+| aggregate @ 8 / @ 16 streams | 435 / 404 | **475 / 471** |
+| cold prefill @ 128k | 3,376 t/s | **4,086 t/s** |
 | GPU KV cache | ~202k tokens | **922k tokens** |
 
 The original 0.2.3-era table (naive vs tuned FP8) remains in
