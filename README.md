@@ -1,26 +1,38 @@
 # Dual AMD R9700 vLLM Serving on Proxmox — with working GPU P2P and DFlash2
 
-A reproducible guide for serving **Qwen3.8-27B at ~140 tok/s single-stream, ~600 tok/s
-aggregate, and ~5,000 tok/s prefill** on two AMD Radeon AI PRO R9700s (gfx1201/RDNA4)
-passed through to a Proxmox VM — including the four fixes required to make **GPU↔GPU
-P2P work inside a VM**, which as far as we know had no public end-to-end recipe before.
+A reproducible guide for serving **Qwen3.8-27B at 161.5 tok/s combined single-stream
+decode (>210 on json/math), ~4,700 tok/s prefill, and a 922k-token KV cache** on two
+AMD Radeon AI PRO R9700s (gfx1201/RDNA4) passed through to a Proxmox VM — including the
+four fixes required to make **GPU↔GPU P2P work inside a VM**, which as far as we know
+had no public end-to-end recipe before.
 
-Everything here was measured on real hardware in August 2026. One day of debugging,
-compressed into the steps below.
+Everything here was measured on real hardware in August 2026, and every adopted config
+passed output-quality gates (not just throughput runs).
 
 ## Results
 
-**Full [BetterBench](https://github.com/GGZ14/BetterBench) report: [benchmarks/RESULTS.md](benchmarks/RESULTS.md)**
-(percentile tables, concurrency knee, 2k–128k prefill sweep, raw JSON + charted HTML).
+Two serving profiles, same hardware and P2P plumbing:
 
+- **FP8 + DFlash2** (the original guide): the compose file below.
+- **MXFP4-W4A8 + DFlash2-FP8** ([`mxfp4-dflash/`](mxfp4-dflash/), added 2026-08-29):
+  **+45% single-stream decode and 4.6× the KV capacity** (922k tokens) on vLLM 0.28,
+  via [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4)'s
+  kernels. Full comparison: [benchmarks/RESULTS-MXFP4-DFLASH.md](benchmarks/RESULTS-MXFP4-DFLASH.md).
 
-| metric | naive setup (RCCL fallback, MTP) | this guide (P2P + DFlash2, tuned) |
-|---|---|---|
-| single-stream decode | 86–98 tok/s | **132–144 tok/s** |
-| aggregate @ 8 concurrent | 356–401 tok/s | **560–611 tok/s** |
-| cold prefill @ 7k ctx | 2,191 tok/s | **5,034 tok/s** |
-| cold prefill @ 30k ctx | 2,886 tok/s | **4,525 tok/s** |
-| cached-prefix TTFT | ~0.7 s | ~0.5 s |
+Measured like-for-like with [BetterBench](https://github.com/GGZ14/BetterBench) 0.4.0
+(0.4.0 measures real stream-update gaps — its numbers are NOT comparable with the
+0.2.3-era tables in [benchmarks/RESULTS.md](benchmarks/RESULTS.md)):
+
+| metric (BetterBench 0.4.0) | FP8 + DFlash2 | MXFP4-W4A8 + DFlash2-FP8 |
+|---|--:|--:|
+| combined decode t/s (weighted) | 106.2 | **161.5** |
+| best categories (json / math) | 145.9 / 136.8 | **221.1 / 214.7** |
+| aggregate @ 8 / @ 16 streams | 435 / 404 | **475 / 471** |
+| cold prefill @ 128k | 3,376 t/s | **4,086 t/s** |
+| GPU KV cache | ~202k tokens | **922k tokens** |
+
+The original 0.2.3-era table (naive vs tuned FP8) remains in
+[benchmarks/RESULTS.md](benchmarks/RESULTS.md).
 
 ## Hardware / host
 
@@ -163,7 +175,7 @@ hard-won, non-obvious settings:
 
 | setting | value | why |
 |---|---|---|
-| drafter `attention_backend` | `TRITON_ATTN` | the combination that works; and use vLLM ≥ 0.28 native DFlash2 — the 0.27 backport corrupts output (periodic ~2-request garbage window every ~14 requests) |
+| drafter `attention_backend` | `TRITON_ATTN` | the combination that works; and prefer vLLM ≥ 0.28 native DFlash2 — the early 0.27 backport we first ran corrupted output (periodic ~2-request garbage window every ~14 requests). (ggz14's later 0.27.1 backport measures clean, but native needs no maintenance.) |
 | target `--attention-backend` | `R4D` | radiance's hand-written gfx1201 kernels |
 | `--max-num-batched-tokens` | `8192` | bigger chunks amortize prefill… |
 | `RADIANCE_AR_MAX_KB` | `98304` | …but ONLY with this raised: the P2P one-shot all-reduce silently falls back to RCCL for messages over the default 48MB cap, and an 8192-token chunk sends 84MB. Without this, chunk 8192 is a net loss. |
@@ -186,15 +198,32 @@ hard-won, non-obvious settings:
    don't assume.
 5. A dedicated **DHCP reservation** for the VM saves you rediscovering its IP via
    `qm agent <vmid> network-get-interfaces`.
+6. **vLLM's startup memory gate compares `util × total` against *current* free VRAM**,
+   so ~60 MiB of idle VRAM use (a VM console framebuffer) can make `GPU_UTIL≥0.97`
+   permanently unbootable. Boot at 0.95 and size KV with an explicit
+   `--kv-cache-memory` pin instead — the pin overrides util and reclaims the 1–3 GiB
+   vLLM's own profiler leaves on the table (derivation recipe in
+   [`mxfp4-dflash/run_mxfp4_dflash.sh`](mxfp4-dflash/run_mxfp4_dflash.sh)).
+7. **On the MXFP4-W4A8+dflash profile**, `--enable-per-request-metrics` +
+   `--enable-prompt-tokens-details` cost a periodic **~0.5 s stream stall**
+   (update-gap p99 523.8 ms → 34.7 ms without; A/B'd). The FP8 profile ran the same
+   flags with clean streaming (p99 56.8 ms), so this is a flags × profile interaction —
+   if you enable them, check your update-gap p99 before trusting the stream.
+8. Trim `cudagraph_capture_sizes` to `max_num_seqs × (num_speculative_tokens + 1)` —
+   the default ladder captures ~1 GiB/GPU of graphs that can never replay.
+9. This lineage returns the thinking trace in a `reasoning` field (not
+   `reasoning_content`) on both vLLM 0.27 and 0.28 images — point clients at either.
 
 ## Variants
 
-- **Multi-agent / long-context profile**: swap the target to
-  `amd/Qwen3.8-27B-Quark-AWQ-MXFP4` (`WEIGHT_QUANTIZATION=auto`,
-  `RADIANCE_MXFP4=1 RADIANCE_MXFP4_W4A8=1`) with MTP speculation instead of DFlash2:
-  ~100–110 tok/s single-stream but **846k KV tokens** (~4× concurrency at 200k ctx,
-  3.4× at 250k) vs ~202k on this profile. AWQ quality recovery is 99–102% of BF16
-  (AMD's numbers).
+- **MXFP4-W4A8 + DFlash2-FP8** ([`mxfp4-dflash/`](mxfp4-dflash/)) — supersedes the old
+  MXFP4+MTP variant: it keeps MXFP4's KV capacity (now 922k tokens) AND beats the FP8
+  profile's decode by +45% instead of trading it away, by pairing the 4-bit target with
+  an **FP8** DFlash2 drafter (that quant choice is a settled result upstream: a 4-bit
+  drafter costs more acceptance than it saves in bandwidth) plus ggz14's int2
+  draft/verify heads and small-M decode GEMM. AWQ quality recovery is 99–102% of BF16
+  (AMD's numbers); our own output gates (GSM8K-paired upstream, cache-hit correctness,
+  needle retrieval, dup-8gram scans) all pass.
 - **Skip the whole P2P saga**: run the container in an LXC on the Proxmox host instead
   of a VM (host kernel drives the GPUs → native atomics + native P2P, stock RCCL
   works). You give up VM isolation/snapshots; the Proxmox kernel already has
@@ -203,8 +232,9 @@ hard-won, non-obvious settings:
 ## Credits
 
 - [StillDeadcode/vllm-radiance](https://codeberg.org/StillDeadcode/vllm-radiance) — the gfx1201 kernel work this all builds on
+- [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4) — the MXFP4-W4A8 + DFlash2-FP8 stack the fast profile ports (int2 draft/verify heads, small-M decode GEMM, GDN merge, libr4d fixes), and [BetterBench](https://github.com/GGZ14/BetterBench)
 - [magiccodingman/vllm-radiance](https://github.com/magiccodingman/vllm-radiance) — the vLLM 0.28 fork + MXFP4/W4A8
 - [cadamcat/dual-radeon-vllm](https://github.com/cadamcat/dual-radeon-vllm) — root-caused the RCCL hostcall/atomics bug ([ROCm#6520](https://github.com/rocm/rocm/issues/6520)) and published the rebuild recipe
-- z-lab / incoai — the DFlash2 drafter checkpoint; AMD Quark team — the AWQ-MXFP4 quant
+- z-lab / incoai — the DFlash2 drafter checkpoint; [tcclaviger](https://huggingface.co/tcclaviger/Qwen3.8-27B-DFlash2-FP8) — its FP8 quant; AMD Quark team — the AWQ-MXFP4 quant
 
 *Setup debugged and documented with Claude Code.*
