@@ -1,6 +1,6 @@
 # BetterBench results — MXFP4-W4A8 target + FP8 DFlash2 drafter
 
-Measured 2026-08-29 with [BetterBench](https://github.com/GGZ14/BetterBench) **0.4.0**.
+Measured 2026-08-29/30 with [BetterBench](https://github.com/GGZ14/BetterBench) **0.4.0**.
 
 > **Not comparable with the 0.2.3 numbers** in [RESULTS.md](RESULTS.md): 0.4.0 measures
 > real stream-update gaps instead of synthesizing per-token ITL, splits thinking from
@@ -20,25 +20,30 @@ own serving defaults (thinking ON, `reasoning_effort xhigh`).
 | target | Qwen3.8-27B-FP8 | Qwen3.8-27B-MXFP4 (W4A8) | Qwen3.8-27B-MXFP4 (W4A8) |
 | drafter | DFlash2 bf16 (z-lab) | DFlash2-FP8 (tcclaviger) | DFlash2-FP8 (tcclaviger) |
 | dflash impl | native | ggz14 backport | native |
-| radiance extras | — | int2 fast-draft + verify-head, GDN merge, libr4d b9e42ab-rx2, small-M decode GEMM | same, overlaid at container start |
+| radiance extras | — | int2 fast-draft + verify-head, GDN merge, libr4d b9e42ab-rx2, small-M decode GEMM | same @ upstream `2d72e78` (adds dynamic verify width, tunable compressed-AR geometry, libr4d rx3), overlaid at container start |
 | KV capacity | ~202k tokens | 940k tokens | 922k tokens |
-| raw data | [json](baseline-dflash-fp8-magic1011-bb040.json) · [html](baseline-dflash-fp8-magic1011-bb040.html) | [json](candidate-mxfp4-dflash-sd093-bb040.json) · [html](candidate-mxfp4-dflash-sd093-bb040.html) | [json](final-mxfp4-dflash-vllm028-bb040.json) · [html](final-mxfp4-dflash-vllm028-bb040.html) |
+| raw data | [json](baseline-dflash-fp8-magic1011-bb040.json) · [html](baseline-dflash-fp8-magic1011-bb040.html) | [json](candidate-mxfp4-dflash-sd093-bb040.json) · [html](candidate-mxfp4-dflash-sd093-bb040.html) | [json](final2-mxfp4-dflash-vllm028-dynwidth-bb040.json) · [html](final2-mxfp4-dflash-vllm028-dynwidth-bb040.html) (pre-dynwidth run: [json](final-mxfp4-dflash-vllm028-bb040.json) · [html](final-mxfp4-dflash-vllm028-bb040.html)) |
 
 ## Headline comparison
 
 | metric | baseline (FP8+dflash) | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 (adopted) |
 |---|--:|--:|--:|
-| combined decode t/s (weighted median) | 106.2 | 154.2 | **161.5** |
+| combined decode t/s (weighted median) | 106.2 | 154.2 | **164.2** |
 | stream update gap p50 | 39.1 ms | 25.5 ms | **25.1 ms** |
-| stream update gap p99 (weighted) | 56.8 ms | **36.9 ms** | 40.2 ms |
-| TTFT p50 (weighted) | 155 ms | **165 ms** | 199 ms¹ |
-| aggregate @ 8 streams | 435.4 | 464.6 | **474.7** |
-| aggregate @ 16 streams | 404.3 (degrading) | **490.2** | 470.7 |
-| prefill @ 16k / 32k (median) | 4,490 / 4,365 | 4,734 / 4,710 | 4,721 / 4,699 |
-| prefill @ 128k (median) | 3,376 | 4,085 | **4,086** |
+| stream update gap p99 (weighted) | 56.8 ms | **36.9 ms** | 42.3 ms |
+| TTFT p50 (weighted) | 155 ms | **165 ms** | 216 ms¹ |
+| aggregate @ 8 streams | 435.4 | 464.6 | **467.6** |
+| aggregate @ 16 streams | 404.3 (degrading) | 490.2 | **502.9** |
+| prefill @ 16k / 32k (median) | 4,490 / 4,365 | 4,734 / 4,710 | 4,682 / 4,722 |
+| prefill @ 128k (median) | 3,376 | **4,085** | 4,074 |
 | GPU KV cache | ~202k tok | **940k tok** | 922k tok |
 
-¹ the 0.28 port pays ~35 ms more TTFT than the 0.27.1 stack on short prompts; deep
+The adopted column is upstream `2d72e78` (2026-08-30, with dynamic verify width). The
+same port the day before (pre-dynwidth) measured combined 161.5 / @8 474.7 / @16 470.7
+— dynwidth's win is concentrated where its author measured it: batching (@16 +7%) and
+the low-acceptance categories (code +8%, reasoning +9% single-stream).
+
+¹ the 0.28 port pays ~35–50 ms more TTFT than the 0.27.1 stack on short prompts; deep
 prefill and decode are at parity. Root cause unchased — a fixed per-request cost,
 invisible at depth.
 
@@ -52,16 +57,16 @@ demonstration of what those flags cost on this profile.
 
 ## Per-category single-stream decode t/s (median)
 
-| category | baseline | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 (adopted) | Δ vs baseline |
+| category | baseline | mxfp4-dflash 0.27.1 | mxfp4-dflash 0.28 @2d72e78 (adopted) | Δ vs baseline |
 |---|--:|--:|--:|--:|
-| json | 145.9 | 207.5 | **221.1** | +52% |
-| math | 136.8 | 208.8 | **214.7** | +57% |
-| file_edit | 136.6 | 188.8 | **202.5** | +48% |
-| summarization | 134.5 | 186.3 | **202.2** | +50% |
-| code | 94.7 | 151.0 | **157.0** | +66% |
-| prose | 80.0 | 116.2 | **118.1** | +48% |
-| reasoning | 84.2 | 114.1 | **115.2** | +37% |
-| chat | 71.9 | 111.4 | **113.1** | +57% |
+| json | 145.9 | 207.5 | **216.5** | +48% |
+| math | 136.8 | 208.8 | **208.8** | +53% |
+| file_edit | 136.6 | 188.8 | **201.6** | +48% |
+| summarization | 134.5 | 186.3 | **184.8** | +37% |
+| code | 94.7 | 151.0 | **169.9** | +79% |
+| reasoning | 84.2 | 114.1 | **125.4** | +49% |
+| prose | 80.0 | 116.2 | **113.4** | +42% |
+| chat | 71.9 | 111.4 | **109.3** | +52% |
 
 ## Output-quality gates (run on every adopted config)
 
