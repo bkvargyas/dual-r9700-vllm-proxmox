@@ -5,8 +5,10 @@
 # written for stilldeadcode/vllm-radiance:0.9.3 / vLLM 0.27.1 / podman) ported to the
 # vLLM 0.28 image this guide already uses, under docker, with the P2P RCCL mounts.
 #
-# RUN IT FROM A CLONE OF THE ggz14 REPO (it is the patch/module source):
+# RUN IT FROM A CLONE OF THE ggz14 REPO (it is the patch/module source) at the pinned
+# commit this launcher's patch battery matches — see the README's rebuild table:
 #   git clone https://codeberg.org/ggz14/radiance-vllm-mxfp4 && cd radiance-vllm-mxfp4
+#   git checkout 2d72e78
 #   cp <this-guide>/mxfp4-dflash/run_mxfp4_dflash.sh \
 #      <this-guide>/mxfp4-dflash/patch_transformers_docstring_lint.py .
 #   MODELS=$HOME/models ./run_mxfp4_dflash.sh
@@ -99,7 +101,7 @@ R4D_PIN=${R4D_PIN:-b9e42ab}
 R4D_CACHE=${R4D_CACHE:-$HOME/.cache/radiance-libr4d}
 R4D_PATCH="$SCRIPT_DIR/r4d_radiance_extras.patch"
 R4D_KEY="$R4D_PIN"
-if [ -f "$R4D_PATCH" ]; then R4D_KEY="$R4D_PIN-rx2"; fi
+if [ -f "$R4D_PATCH" ]; then R4D_KEY="$R4D_PIN-rx3"; fi
 if [ -z "$R4D_SO" ] && [ "${AUTO_R4D:-1}" = 1 ]; then
   if [ ! -f "$R4D_CACHE/$R4D_KEY/r4d.so" ]; then
     echo "[radiance] building libr4d $R4D_KEY in $IMAGE -- one time, a few minutes"
@@ -195,6 +197,13 @@ exec docker run -d --name "$NAME" --restart "$RESTART" --ipc=host --network=host
   -e RADIANCE_GDN_MERGE_INPROJ="$GDN_MERGE" \
   -e R4D_ATTN_FP8="${R4D_ATTN_FP8:-3}" \
   -e RADIANCE_GDN_FUSED_UPDATE="${RADIANCE_GDN_FUSED_UPDATE:-1}" \
+  -e RADIANCE_DYNAMIC_WIDTH="${RADIANCE_DYNAMIC_WIDTH:-1}" \
+  -e RADIANCE_DYNW_ALPHA="${RADIANCE_DYNW_ALPHA:-0.35}" \
+  -e RADIANCE_DYNW_MARGIN="${RADIANCE_DYNW_MARGIN:-2}" \
+  -e RADIANCE_DYNW_MIN="${RADIANCE_DYNW_MIN:-2}" \
+  -e RADIANCE_DYNW_MIN_BATCH="${RADIANCE_DYNW_MIN_BATCH:-3}" \
+  -e RADIANCE_AR_QNB="${RADIANCE_AR_QNB:-96}" \
+  -e RADIANCE_AR_QNT="${RADIANCE_AR_QNT:-1024}" \
   -e RADIANCE_MXFP4_EPIFAST="${RADIANCE_MXFP4_EPIFAST:-1}" \
   -e RADIANCE_TOPK_TRITON_MIN_ROWS="${RADIANCE_TOPK_TRITON_MIN_ROWS:-1}" \
   -e RADIANCE_SKINNY_GEMM="${RADIANCE_SKINNY_GEMM:-1}" \
@@ -224,6 +233,8 @@ exec docker run -d --name "$NAME" --restart "$RESTART" --ipc=host --network=host
     python3 patch_verify_head.py
     python3 patch_kv_group_size.py
     python3 patch_gdn_merge_inproj.py
+    python3 patch_dynwidth.py
+    python3 patch_ar_geometry.py
     python3 patch_qwen3_thinkoff.py \
       || echo "[radiance] WARNING: thinkoff patch did not apply; thinking-off requests will return empty content"
     # Cosmetic: newer transformers prints [ERROR] docstring-lint lines via a raw print().
