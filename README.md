@@ -15,7 +15,7 @@ Two serving profiles, same hardware and P2P plumbing:
 
 - **FP8 + DFlash2** (the original guide): the compose file below.
 - **MXFP4-W4A8 + DFlash2-FP8** ([`mxfp4-dflash/`](mxfp4-dflash/), added 2026-08-29):
-  **+45% single-stream decode and 4.6× the KV capacity** (922k tokens) on vLLM 0.28,
+  **+55% single-stream decode and 4.6× the KV capacity** (922k tokens) on vLLM 0.28,
   via [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4)'s
   kernels. Full comparison: [benchmarks/RESULTS-MXFP4-DFLASH.md](benchmarks/RESULTS-MXFP4-DFLASH.md).
 
