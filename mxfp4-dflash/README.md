@@ -39,6 +39,56 @@ from `~/rccl-build`; `RCCL_DIR="" ` skips the mounts on hosts with working atomi
 - the `R4D kernel selection` table — `no … gemm_nt kernel` lines are expected
   (this libr4d pin doesn't ship them; the fallback is graceful and deliberate)
 
+## Rebuilding this stack from scratch (disaster recovery)
+
+Everything below is what the running server is actually made of. With these pins, a
+bare VM (that already has the main README's P2P plumbing) rebuilds to a byte-equivalent
+stack; nothing is fetched at container runtime except what's listed.
+
+**Exact pins (verified working together, 2026-08-30):**
+
+| component | pin |
+|---|---|
+| serving image | `magiccodingman/vllm-radiance:1.0.11` — digest `sha256:a3b1b26439260a3fc4fc23a30fd94e8b624123f8837aa328866f48e59f2d2f4b` (vLLM 0.28.0, torch 2.12, ROCm core-7.14) |
+| patch/module source | `codeberg.org/ggz14/radiance-vllm-mxfp4` @ **`2d72e78`** |
+| libr4d | `codeberg.org/StillDeadcode/libr4d` @ **`b9e42ab`** + the ggz14 repo's `r4d_radiance_extras.patch` (the "rx3" build — the patch is versioned inside the pinned ggz14 commit) |
+| target checkpoint | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4` (HF), converted once by the ggz14 repo's `fp8_mtp.py` → `Qwen3.8-27B-MXFP4-mtpfp8` (~19 GB) |
+| drafter checkpoint | `tcclaviger/Qwen3.8-27B-DFlash2-FP8` (HF, ~2 GB, single safetensors) |
+| RCCL | rebuilt 2.27.7 (`release/rocm-rel-7.1.1.1` + NDEBUG) + the two stubs from [`../rccl-stubs/`](../rccl-stubs/) — main README §4 |
+| this repo | `run_mxfp4_dflash.sh` + `patch_transformers_docstring_lint.py` from this directory |
+
+Pull images **by digest**, not tag — tags on both Docker Hub repos have moved before:
+`docker pull magiccodingman/vllm-radiance@sha256:a3b1b264…`. (For reference, the
+0.27.1-era alternative was `stilldeadcode/vllm-radiance:0.9.3` @
+`sha256:4569420917…` — not needed for this profile.)
+
+**Order of operations** (times for a 2× R9700 / EPYC box):
+
+1. Main README first: VM PCIe-switch config, XanMod kernel, amdgpu grub params,
+   RCCL rebuild (~40–85 min, once ever) → `~/rccl-build/`.
+2. `git clone https://codeberg.org/ggz14/radiance-vllm-mxfp4 && git -C radiance-vllm-mxfp4 checkout 2d72e78`,
+   copy this directory's two files in.
+3. Models: download the drafter; download AMD's MXFP4 release and run `fp8_mtp.py`
+   (~15 min, once ever).
+4. `MODELS=$HOME/models ./run_mxfp4_dflash.sh` — first run builds libr4d inside the
+   image (~5 min, cached in `~/.cache/radiance-libr4d/b9e42ab-rx3/`) and cold-compiles
+   Triton/inductor (~7–10 min, cached in the `CACHE` dir). Warm boots: ~3 min.
+5. Re-derive box-specifics rather than copying them: the KV pin (recipe in the
+   launcher; profiled boots work fine while you measure) and the render/video GIDs
+   (the launcher auto-detects via `getent`).
+6. Gate before trusting it (all of these bit us at least once): the log markers above,
+   a prefix-cache-**hit** correctness probe, a long-context needle, one
+   `docker restart` cycle.
+
+**Bit-rot insurance:** the two codeberg repos and the HF drafter are one-person
+projects — keep local mirrors. A running deployment already holds everything needed
+(the repo clone, the built libr4d directory, the converted checkpoint, `~/rccl-build`)
+— back those four paths up and step 1–3 become a restore instead of a rebuild.
+Upstream moves fast and its patches are written against exact vLLM file contents:
+before adopting a newer ggz14 commit, dry-run the patch battery against the image
+(`docker run --rm --entrypoint bash -v $PWD:/patches <image> -lc 'cd /patches && python3 patch_<name>.py'`)
+— an anchor mismatch means that patch needs re-porting, not forcing.
+
 ## Sharp edges found porting this (in rough order of pain)
 
 - **vLLM's startup memory gate compares `util × total` against *current* free VRAM.**
