@@ -1,7 +1,7 @@
 # Dual AMD R9700 vLLM Serving on Proxmox — with working GPU P2P and DFlash2
 
-A reproducible guide for serving **Qwen3.8-27B at 164 tok/s combined single-stream
-decode (>200 on json/math/file_edit), ~4,700 tok/s prefill, and a 922k-token KV cache** on two
+A reproducible guide for serving **Qwen3.8-27B at ~160 tok/s combined single-stream
+decode (>190 on json/math/file_edit), ~5,200 tok/s prefill, and a 922k-token KV cache** on two
 AMD Radeon AI PRO R9700s (gfx1201/RDNA4) passed through to a Proxmox VM — including the
 four fixes required to make **GPU↔GPU P2P work inside a VM**, which as far as we know
 had no public end-to-end recipe before.
@@ -14,21 +14,24 @@ passed output-quality gates (not just throughput runs).
 Two serving profiles, same hardware and P2P plumbing:
 
 - **FP8 + DFlash2** (the original guide): the compose file below.
-- **MXFP4-W4A8 + DFlash2-FP8** ([`mxfp4-dflash/`](mxfp4-dflash/), added 2026-08-29):
-  **+55% single-stream decode and 4.6× the KV capacity** (922k tokens) on vLLM 0.28,
-  via [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4)'s
+- **MXFP4-W4A8 + DFlash2-FP8** ([`mxfp4-dflash/`](mxfp4-dflash/), added 2026-08-29,
+  now at upstream `b9d7ecf`): **+50% single-stream decode and 4.6× the KV capacity**
+  (922k tokens) on vLLM 0.28, plus +10% prefill @16k and 123 ms TTFT after the
+  2026-08-31 update, via
+  [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4)'s
   kernels. Full comparison: [benchmarks/RESULTS-MXFP4-DFLASH.md](benchmarks/RESULTS-MXFP4-DFLASH.md).
 
 Measured like-for-like with [BetterBench](https://github.com/GGZ14/BetterBench) 0.4.0
 (0.4.0 measures real stream-update gaps — its numbers are NOT comparable with the
 0.2.3-era tables in [benchmarks/RESULTS.md](benchmarks/RESULTS.md)):
 
-| metric (BetterBench 0.4.0) | FP8 + DFlash2 | MXFP4-W4A8 + DFlash2-FP8 |
+| metric (BetterBench 0.4.0) | FP8 + DFlash2 | MXFP4-W4A8 + DFlash2-FP8 (`b9d7ecf`) |
 |---|--:|--:|
-| combined decode t/s (weighted) | 106.2 | **164.2** |
-| best categories (json / math) | 145.9 / 136.8 | **216.5 / 208.8** |
-| aggregate @ 8 / @ 16 streams | 435 / 404 | **468 / 503** |
-| cold prefill @ 128k | 3,376 t/s | **4,074 t/s** |
+| combined decode t/s (weighted) | 106.2 | **159.7** |
+| best categories (json / math) | 145.9 / 136.8 | **222.4 / 207.1** |
+| aggregate @ 8 / @ 16 streams | 435 / 404 | **495 / 476** |
+| cold prefill @ 16k / @ 128k | 4,490 / 3,376 t/s | **5,153 / 4,160 t/s** |
+| TTFT p50 (small prompt) | 155 ms | 123 ms |
 | GPU KV cache | ~202k tokens | **922k tokens** |
 
 The original 0.2.3-era table (naive vs tuned FP8) remains in

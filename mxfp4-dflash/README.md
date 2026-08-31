@@ -1,7 +1,8 @@
 # MXFP4-W4A8 + DFlash2-FP8 profile (vLLM 0.28)
 
-The fast profile: **+45% single-stream decode over the FP8 profile and 4.6× the KV
-capacity** (922k tokens — real multi-agent headroom at 200k+ contexts), same hardware.
+The fast profile: **+50% single-stream decode over the FP8 profile, +15% prefill, and
+4.6× the KV capacity** (922k tokens — real multi-agent headroom at 200k+ contexts),
+same hardware.
 Numbers and methodology: [../benchmarks/RESULTS-MXFP4-DFLASH.md](../benchmarks/RESULTS-MXFP4-DFLASH.md).
 
 It runs [ggz14/radiance-vllm-mxfp4](https://codeberg.org/ggz14/radiance-vllm-mxfp4)'s
@@ -45,13 +46,13 @@ Everything below is what the running server is actually made of. With these pins
 bare VM (that already has the main README's P2P plumbing) rebuilds to a byte-equivalent
 stack; nothing is fetched at container runtime except what's listed.
 
-**Exact pins (verified working together, 2026-08-30):**
+**Exact pins (verified working together, 2026-08-31):**
 
 | component | pin |
 |---|---|
 | serving image | `magiccodingman/vllm-radiance:1.0.11` — digest `sha256:a3b1b26439260a3fc4fc23a30fd94e8b624123f8837aa328866f48e59f2d2f4b` (vLLM 0.28.0, torch 2.12, ROCm core-7.14) |
-| patch/module source | `codeberg.org/ggz14/radiance-vllm-mxfp4` @ **`2d72e78`** |
-| libr4d | `codeberg.org/StillDeadcode/libr4d` @ **`b9e42ab`** + the ggz14 repo's `r4d_radiance_extras.patch` (the "rx3" build — the patch is versioned inside the pinned ggz14 commit) |
+| patch/module source | `codeberg.org/ggz14/radiance-vllm-mxfp4` @ **`b9d7ecf`** |
+| libr4d | `codeberg.org/StillDeadcode/libr4d` @ **`b9e42ab`** + the ggz14 repo's `r4d_radiance_extras.patch` (the "rx4" build — the patch is versioned inside the pinned ggz14 commit) |
 | target checkpoint | `amd/Qwen3.8-27B-Quark-AWQ-MXFP4` (HF), converted once by the ggz14 repo's `fp8_mtp.py` → `Qwen3.8-27B-MXFP4-mtpfp8` (~19 GB) |
 | drafter checkpoint | `tcclaviger/Qwen3.8-27B-DFlash2-FP8` (HF, ~2 GB, single safetensors) |
 | RCCL | rebuilt 2.27.7 (`release/rocm-rel-7.1.1.1` + NDEBUG) + the two stubs from [`../rccl-stubs/`](../rccl-stubs/) — main README §4 |
@@ -66,12 +67,12 @@ Pull images **by digest**, not tag — tags on both Docker Hub repos have moved 
 
 1. Main README first: VM PCIe-switch config, XanMod kernel, amdgpu grub params,
    RCCL rebuild (~40–85 min, once ever) → `~/rccl-build/`.
-2. `git clone https://codeberg.org/ggz14/radiance-vllm-mxfp4 && git -C radiance-vllm-mxfp4 checkout 2d72e78`,
+2. `git clone https://codeberg.org/ggz14/radiance-vllm-mxfp4 && git -C radiance-vllm-mxfp4 checkout b9d7ecf`,
    copy this directory's two files in.
 3. Models: download the drafter; download AMD's MXFP4 release and run `fp8_mtp.py`
    (~15 min, once ever).
 4. `MODELS=$HOME/models ./run_mxfp4_dflash.sh` — first run builds libr4d inside the
-   image (~5 min, cached in `~/.cache/radiance-libr4d/b9e42ab-rx3/`) and cold-compiles
+   image (~5 min, cached in `~/.cache/radiance-libr4d/b9e42ab-rx4/`) and cold-compiles
    Triton/inductor (~7–10 min, cached in the `CACHE` dir). Warm boots: ~3 min.
 5. Re-derive box-specifics rather than copying them: the KV pin (recipe in the
    launcher; profiled boots work fine while you measure) and the render/video GIDs

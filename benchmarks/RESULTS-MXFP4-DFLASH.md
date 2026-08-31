@@ -1,6 +1,7 @@
 # BetterBench results — MXFP4-W4A8 target + FP8 DFlash2 drafter
 
-Measured 2026-08-29/30 with [BetterBench](https://github.com/GGZ14/BetterBench) **0.4.0**.
+Measured 2026-08-29/30 (three-way comparison) and 2026-08-31 (upstream `b9d7ecf`
+update) with [BetterBench](https://github.com/GGZ14/BetterBench) **0.4.0**.
 
 > **Not comparable with the 0.2.3 numbers** in [RESULTS.md](RESULTS.md): 0.4.0 measures
 > real stream-update gaps instead of synthesizing per-token ITL, splits thinking from
@@ -11,7 +12,59 @@ All three runs: identical config (20 passes/category, cold prefix cache, concurr
 48 req × levels 1–16, prefill sweep 2k–128k), same LAN client, same VM, the endpoint's
 own serving defaults (thinking ON, `reasoning_effort xhigh`).
 
-## The three configs
+## 2026-08-31 update — upstream `b9d7ecf` (current)
+
+The adopted 0.28 port moved from ggz14 `2d72e78` to `b9d7ecf` (adds the top-k composite
+sampler route, shared GDN metadata build, tunable dflash selector top-k, an epilogue
+prefetch revert, and the "rx4" extras patch → libr4d rebuild). Full 20-pass run:
+[json](final3-mxfp4-dflash-vllm028-b9d7ecf-bb040.json) ·
+[html](final3-mxfp4-dflash-vllm028-b9d7ecf-bb040.html). The prefill sweep now extends
+to 250k (BetterBench's new `deep_prefill` depth; fits under `--max-model-len 262144`).
+
+| metric | `2d72e78` (08-30) | `b9d7ecf` (08-31) |
+|---|--:|--:|
+| prefill @ 16k (median) | 4,682 t/s | **5,153 t/s** (+10%) |
+| prefill @ 128k (median) | 4,074 t/s | **4,160 t/s** |
+| prefill @ 250k (median) | — | **3,376 t/s** |
+| aggregate @ 8 streams | 467.6 | **495.1** (+6%) |
+| aggregate @ 16 streams | **502.9** | 475.5 |
+| TTFT p50 (small prompt) | 216 ms | **123 ms** |
+| stream update gap p99 | 42.3 ms | **25.8 ms** |
+| combined decode t/s | **164.2** | 159.7 |
+| — json / math | 216.5 / **208.8** | **222.4** / 207.1 |
+| — code / reasoning | **169.9 / 125.4** | 153.3 / 112.4 |
+
+The short-prompt TTFT tax the port carried vs the 0.27.1 stack (footnote ¹ below) is
+gone in this update — 123 ms p50 now beats the 0.27.1 stack's 165 ms.
+
+**Known regression, deliberately kept:** single-stream code/reasoning decode is down
+9–10%. It reproduces across two independent 20-pass runs
+([recheck json](final3-recheck-code-reasoning.json) ·
+[html](final3-recheck-code-reasoning.html)) and is a **draft-acceptance** drop, not a
+step-time one: code tokens/update fell 4.23 → 3.8 while the update gap improved
+25.1 → 24.85 ms. The obvious suspect — the new top-k composite sampler route, which
+rewrites exactly the path BetterBench's `top_k 20` sampling exercises — was ruled out
+by A/B: with `RADIANCE_TOPK_COMPOSITE=0`, decode is unchanged (151.2 vs 153.8,
+[json](final3-topkcomp-off-code-reasoning.json) ·
+[html](final3-topkcomp-off-code-reasoning.html)) and so is concurrency (499.8 / 478.9
+vs 495.1 / 475.5 @8/@16,
+[json](final3-topkcomp-off-concurrency.json) ·
+[html](final3-topkcomp-off-concurrency.html)). Remaining suspects: the rx4 libr4d
+epilogue changes or the `radiance_mxfp4` rework. The config was kept at upstream
+defaults on prefill + concurrency grounds; the next no-rebuild probe, if single-stream
+code decode matters to you, is `RADIANCE_GDN_SHARED_BUILD=0` (env toggle, warm boot).
+
+Output-quality gates re-run on this update and all passed: 24-probe factual battery,
+prefix-cache-hit correctness under dflash (TTFT 3.65 s → 0.42 s across hits, all
+correct), 55k-token needle, KV capacity unchanged at 922,307 tokens.
+
+Not enabled yet: upstream `b9d7ecf` also ships an opt-in traced-quant + fp8 residual
+stream path (`RADIANCE_NORMQUANT_FUSION` / `RADIANCE_FP8_STREAM`, upstream's headline
+25.4 → 22.66 ms/step decode). It defaults off upstream, needs compilation-config merge
+plumbing this launcher doesn't have yet, and carries a documented silent-stale-cache
+trap — tracked as a follow-up.
+
+## The three configs (2026-08-29/30 comparison)
 
 | | baseline | mxfp4-dflash (0.27.1) | mxfp4-dflash (0.28 port) |
 |---|---|---|---|
