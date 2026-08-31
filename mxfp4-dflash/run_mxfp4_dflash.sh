@@ -8,7 +8,7 @@
 # RUN IT FROM A CLONE OF THE ggz14 REPO (it is the patch/module source) at the pinned
 # commit this launcher's patch battery matches — see the README's rebuild table:
 #   git clone https://codeberg.org/ggz14/radiance-vllm-mxfp4 && cd radiance-vllm-mxfp4
-#   git checkout 2d72e78
+#   git checkout b9d7ecf
 #   cp <this-guide>/mxfp4-dflash/run_mxfp4_dflash.sh \
 #      <this-guide>/mxfp4-dflash/patch_transformers_docstring_lint.py .
 #   MODELS=$HOME/models ./run_mxfp4_dflash.sh
@@ -19,10 +19,11 @@
 #              bf16 mtp.* layers fall through to the mxfp4 scheme and assert)
 #   - drafter: tcclaviger/Qwen3.8-27B-DFlash2-FP8 (hf download …)
 #
-# Port findings (why this works on 0.28.0 — all verified 2026-08-29):
+# Port findings (why this works on 0.28.0 — verified 2026-08-29, b9d7ecf battery 2026-08-31):
 #   - patch_quark_mxfp4 / patch_ar_maxbytes / patch_topk_triton_rows: already in the image (NOOP)
 #   - patch_dflash_calib, patch_rmsquant_fusion, patch_verify_head, patch_kv_group_size,
-#     patch_gdn_merge_inproj, patch_qwen3_thinkoff: apply cleanly
+#     patch_gdn_merge_inproj, patch_qwen3_thinkoff, and (new in b9d7ecf) patch_topk_composite,
+#     patch_gdn_shared_build, patch_dflash_selector_topk: apply cleanly
 #   - patch_dflash_mxfp4_kv: SKIPPED — upstreamed in 0.28's native qwen3_dflash.py
 #     (_DFLASH_DENSE guard + identity recovery); dflash itself is native (vllm PR #52816)
 #   - the overlay modules import no vLLM internals (r4d.select() name registry; a missing
@@ -40,8 +41,10 @@ R4D_ATTN=${R4D_ATTN:-1}
 GDN_MERGE=${RADIANCE_GDN_MERGE_INPROJ:-1}
 CACHE_SUF=""
 if [ "$GDN_MERGE" = 1 ]; then CACHE_SUF="$CACHE_SUF-gdnm"; fi
-# torch-2.12 caches; never share a cache dir across images/configs
-CACHE=${CACHE:-$HOME/.radiance-cache-mxfp4-dflash$CACHE_SUF}
+# torch-2.12 caches; never share a cache dir across images/configs OR ggz14 pins — the
+# overlay modules change the traced graph between pins, and a stale cache crash-loops
+# with an IndexError loading old graphs. The pin is baked into the dir name for that.
+CACHE=${CACHE:-$HOME/.radiance-cache-mxfp4-dflash-b9d7ecf$CACHE_SUF}
 # 0.95 clears vLLM's startup free-memory gate with a little VRAM already in use (a VM
 # console, a desktop). 0.97-0.98 only pass on a card that idles nearly empty — the gate
 # compares util x total against CURRENT free, so ~60 MiB of idle use can make a higher
@@ -101,7 +104,9 @@ R4D_PIN=${R4D_PIN:-b9e42ab}
 R4D_CACHE=${R4D_CACHE:-$HOME/.cache/radiance-libr4d}
 R4D_PATCH="$SCRIPT_DIR/r4d_radiance_extras.patch"
 R4D_KEY="$R4D_PIN"
-if [ -f "$R4D_PATCH" ]; then R4D_KEY="$R4D_PIN-rx3"; fi
+# rx4 = the extras patch as of ggz14 b9d7ecf; bump this suffix whenever the patch
+# content changes, or a stale cached build serves silently.
+if [ -f "$R4D_PATCH" ]; then R4D_KEY="$R4D_PIN-rx4"; fi
 if [ -z "$R4D_SO" ] && [ "${AUTO_R4D:-1}" = 1 ]; then
   if [ ! -f "$R4D_CACHE/$R4D_KEY/r4d.so" ]; then
     echo "[radiance] building libr4d $R4D_KEY in $IMAGE -- one time, a few minutes"
@@ -189,6 +194,9 @@ exec docker run -d --name "$NAME" --restart "$RESTART" --ipc=host --network=host
   -e RADIANCE_MXFP4=1 -e RADIANCE_MXFP4_W4A8=1 -e RADIANCE_MXFP4_W4A8_MIN_M="$MIN_M" \
   -e RADIANCE_FAST_DRAFT="$FAST_DRAFT" -e RADIANCE_DRAFT_TAU="${RADIANCE_DRAFT_TAU:-0.20}" \
   -e RADIANCE_DRAFT_RERANK="${RADIANCE_DRAFT_RERANK:-32}" \
+  -e RADIANCE_DFLASH_SELECTOR_TOPK="${RADIANCE_DFLASH_SELECTOR_TOPK:-}" \
+  -e RADIANCE_TOPK_COMPOSITE="${RADIANCE_TOPK_COMPOSITE:-1}" \
+  -e RADIANCE_GDN_SHARED_BUILD="${RADIANCE_GDN_SHARED_BUILD:-1}" \
   -e RADIANCE_VERIFY_HEAD="${RADIANCE_VERIFY_HEAD:-0}" \
   -e RADIANCE_VERIFY_HEAD_MAX_M="${RADIANCE_VERIFY_HEAD_MAX_M:-32}" \
   -e RADIANCE_MXFP4_TN4_MIN_M="${RADIANCE_MXFP4_TN4_MIN_M:-2048}" \
@@ -232,6 +240,9 @@ exec docker run -d --name "$NAME" --restart "$RESTART" --ipc=host --network=host
     python3 patch_rmsquant_fusion.py
     python3 patch_verify_head.py
     python3 patch_kv_group_size.py
+    python3 patch_topk_composite.py
+    python3 patch_gdn_shared_build.py
+    python3 patch_dflash_selector_topk.py
     python3 patch_gdn_merge_inproj.py
     python3 patch_dynwidth.py
     python3 patch_ar_geometry.py
@@ -242,7 +253,8 @@ exec docker run -d --name "$NAME" --restart "$RESTART" --ipc=host --network=host
       || echo "[radiance] WARNING: docstring-lint silencer did not apply (harmless noise remains)"
     cp mxfp4-configs/*.json "$SP"/aiter/ops/triton/configs/gemm/
     cp radiance_mxfp4.py radiance_gdn.py radiance_rmsquant.py radiance_drafthead.py \
-       radiance_verifyhead.py radiance_gdnmerge.py radiance_aroverlap.py "$SP"/
+       radiance_verifyhead.py radiance_gdnmerge.py radiance_aroverlap.py radiance_topk.py \
+       radiance_arnq.py "$SP"/
     hipcc -O3 -w -std=c++17 -fPIC -shared --offload-arch=gfx1201 $(python3 -m pybind11 --includes) \
       radiance_mxfp4_fp8.hip -o "$SP"/radiance_mxfp4_fp8.so
     if [ -n "${R4D_SO:-}" ] && [ -f /r4d/r4d.so ]; then
