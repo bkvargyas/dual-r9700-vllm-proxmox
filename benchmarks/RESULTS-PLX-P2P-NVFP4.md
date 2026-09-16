@@ -15,7 +15,7 @@ separate root ports), which made both the 32GB BAR and P2P setup materially hard
 - **Host**: Gigabyte MZ22-G20, AMD EPYC 7H12 (64c), 440GB RAM, Proxmox VE 9.2 (VFIO passthrough)
 - **GPUs**: 2× AMD Radeon AI PRO R9700 32GB, each behind its **own PLX PEX 8747 (Gen3 x16)** switch chip
 - **P2P**: ON (emulated-switch topology + XanMod kernel + NDEBUG RCCL); **ReBAR**: ON (full 32GB BAR, forced per-chain)
-- **Image**: `stilldeadcode/vllm-radiance:0.9.3` (torch 2.11 / ROCm 7.14, RCCL 2.30), TP=2
+- **Stack**: [GGZ14/vllm-mxfp4](https://github.com/GGZ14/vllm-mxfp4) (repo 0.12.0, commit `92eed82`) — pulls the pinned base image `stilldeadcode/vllm-radiance:0.9.3` (torch 2.11 / ROCm 7.14, RCCL 2.30) and applies its MXFP4/NVFP4 + R4D patches at container start; TP=2
 - **Model**: `unsloth/Qwen3.8-27B-NVFP4` (NVFP4 → MXFP4 requant at load, `RADIANCE_NVFP4_MXFP4=1`), FP8 KV cache, DFlash2-FP8 drafter (k=7)
 - **Context**: 262k max-model-len · `max-num-seqs 8` · chunk 8192 · GPU util 0.95 · 225W power cap/card
 - **All-reduce**: R4D P2P one-shot (`RADIANCE_USE_R4D_AR=1`), byte-identical to RCCL
